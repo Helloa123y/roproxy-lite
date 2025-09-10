@@ -31,20 +31,40 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # 🔥 KEIN pkill MEHR - stattdessen systemctl stop
+          # Stopping services
           echo "🛑 Stopping any running services..."
           systemctl stop roproxy-lite || echo "⚠️ Service not running"
           systemctl disable roproxy-lite || echo "⚠️ Service not enabled"
           sleep 2
           
-          # Manuell Prozesse beenden ohne pkill
-          echo "🔫 Stopping any rogue processes..."
-          kill $(lsof -t -i:8080) 2>/dev/null || echo "⚠️ No processes on port 8080"
-          sleep 2
-          
           # Clean directory
           echo "🧹 Cleaning directory..."
           rm -rf ./* ./.git* 2>/dev/null || true
+          
+          # 🔥 CRITICAL: Install Go PROPERLY
+          echo "📦 Checking Go installation..."
+          if ! command -v go &> /dev/null; then
+            echo "🔧 Installing Go..."
+            # Remove any existing Go installation
+            rm -rf /usr/local/go
+            # Download and install Go
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+            tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+            # Add Go to PATH permanently
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+            # Add to current session
+            export PATH=$PATH:/usr/local/go/bin
+            # Cleanup
+            rm go1.21.0.linux-amd64.tar.gz
+            echo "✅ Go installed successfully"
+          else
+            echo "✅ Go is already installed"
+          fi
+          
+          # Verify Go installation
+          echo "🔍 Go version:"
+          /usr/local/go/bin/go version || go version
           
           # Download repository
           echo "📦 Downloading repository..."
@@ -63,16 +83,21 @@ jobs:
           # DEBUG
           echo "📁 Files in directory:"
           ls -la
-          echo "📄 main.go content (first 10 lines):"
-          head -10 main.go || echo "No main.go found"
           
-          # Build application
+          # Build application with FULL PATH to go
           echo "🔨 Building..."
-          go mod download
-          go build -v -o roproxy-lite
+          /usr/local/go/bin/go mod download || go mod download
+          /usr/local/go/bin/go build -v -o roproxy-lite || go build -v -o roproxy-lite
           
           echo "🔍 Build result:"
           ls -la roproxy-lite
+          
+          if [ ! -f "roproxy-lite" ]; then
+            echo "❌ Build failed! Cannot continue."
+            exit 1
+          fi
+          
+          chmod +x roproxy-lite
           
           # Create systemd service
           echo "📋 Creating service..."
@@ -102,15 +127,8 @@ jobs:
           sleep 5
           systemctl status roproxy-lite --no-pager
           
-          # SHOW LOGS TO SEE WHY IT FAILS
-          echo "📋 Service logs:"
-          journalctl -u roproxy-lite -n 20 --no-pager
-          
-          echo "🔍 Checking processes:"
-          ps aux | grep roproxy || echo "No processes found"
-          
           echo "🔍 Checking port 8080:"
           netstat -tlnp | grep :8080 || echo "Port 8080 not found"
           
-          echo "🧪 Final test with curl:"
+          echo "🧪 Testing with curl:"
           curl -s http://localhost:8080 || echo "Curl failed"
