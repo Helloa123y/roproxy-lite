@@ -31,7 +31,12 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # Clean directory first
+          # 🔥 CRITICAL: Kill old processes first!
+          echo "🔫 Killing old processes..."
+          pkill -f roproxy-lite || true
+          sleep 2
+          
+          # Clean directory
           echo "🧹 Cleaning directory..."
           rm -rf ./* ./.git* 2>/dev/null || true
           
@@ -48,8 +53,8 @@ jobs:
           echo "🔍 Go version:"
           go version
           
-          # Download repository directly
-          echo "📦 Downloading repository directly..."
+          # Download repository
+          echo "📦 Downloading repository..."
           wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz -O repo.tar.gz
           
           if [ -f "repo.tar.gz" ]; then
@@ -63,31 +68,28 @@ jobs:
             git clone https://github.com/Helloa123y/roproxy-lite.git . --depth=1
           fi
           
-          # DEBUG: Show files
+          # DEBUG
           echo "📁 Files in directory:"
           ls -la
-          echo "📁 Go files:"
-          find . -name "*.go" -o -name "go.mod" -o -name "go.sum"
+          echo "📄 main.go content (first 10 lines):"
+          head -10 main.go || echo "No main.go found"
           
-          # Build application - ONLY IF WE HAVE SOURCE FILES
-          if [ -f "main.go" ] && [ -f "go.mod" ]; then
-            echo "🔨 Building from repository source..."
-            go mod download
-            go build -v -o roproxy-lite
-            
-            echo "🔍 Build result:"
-            ls -la roproxy-lite || echo "❌ Binary not found!"
-            
-            if [ -f "roproxy-lite" ]; then
-              chmod +x roproxy-lite
-              echo "🧪 Testing binary (timeout after 3s)..."
-              timeout 3s ./roproxy-lite -version || echo "✅ Binary started successfully (expected for server)"
-            fi
-          else
-            echo "❌ No source files found in repository!"
-            echo "Please check your repository contains main.go and go.mod"
-            exit 1
-          fi
+          # Build application
+          echo "🔨 Building..."
+          go mod download
+          go build -v -o roproxy-lite
+          
+          echo "🔍 Build result:"
+          ls -la roproxy-lite
+          
+          # Kill any remaining old processes
+          echo "🔫 Ensuring no old processes are running..."
+          pkill -f roproxy-lite || true
+          sleep 1
+          
+          # Test the new binary
+          echo "🧪 Testing new binary..."
+          timeout 2s ./roproxy-lite || echo "✅ Test completed"
           
           # Create systemd service
           echo "📋 Creating service..."
@@ -98,8 +100,8 @@ jobs:
           echo "[Service]" >> /etc/systemd/system/roproxy-lite.service
           echo "Type=simple" >> /etc/systemd/system/roproxy-lite.service
           echo "User=root" >> /etc/systemd/system/roproxy-lite.service
-          echo "WorkingDirectory=/app/roproxy-lite" >> /etc/systemd/system/roproxy-lite.service
-          echo "ExecStart=/app/roproxy-lite/roproxy-lite" >> /etc/systemd/system/roproxy-lite.service
+          echo "WorkingDirectory=$APP_DIR" >> /etc/systemd/system/roproxy-lite.service
+          echo "ExecStart=$APP_DIR/roproxy-lite" >> /etc/systemd/system/roproxy-lite.service
           echo "Environment=TIMEOUT=10" >> /etc/systemd/system/roproxy-lite.service
           echo "Environment=RETRIES=3" >> /etc/systemd/system/roproxy-lite.service
           echo "Environment=PORT=8080" >> /etc/systemd/system/roproxy-lite.service
@@ -109,16 +111,24 @@ jobs:
           echo "[Install]" >> /etc/systemd/system/roproxy-lite.service
           echo "WantedBy=multi-user.target" >> /etc/systemd/system/roproxy-lite.service
           
+          # Stop and disable old service first
+          echo "🛑 Stopping old service..."
+          systemctl stop roproxy-lite || true
+          systemctl disable roproxy-lite || true
+          
           systemctl daemon-reload
           systemctl enable roproxy-lite
-          systemctl restart roproxy-lite
+          systemctl start roproxy-lite
           
           echo "✅ Deployment completed!"
-          sleep 3
+          sleep 5
           systemctl status roproxy-lite --no-pager
+          
+          echo "🔍 Checking processes:"
+          ps aux | grep roproxy || echo "No processes found"
           
           echo "🔍 Checking port 8080:"
           netstat -tlnp | grep :8080 || echo "Port 8080 not found"
           
-          echo "🧪 Testing with curl (timeout after 5s):"
-          timeout 5s curl -s http://localhost:8080 || echo "⚠️ Curl timeout (server may be starting)"
+          echo "🧪 Testing with curl:"
+          curl -s http://localhost:8080 || echo "Curl failed"
