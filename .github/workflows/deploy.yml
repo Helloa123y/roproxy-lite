@@ -2,7 +2,7 @@ name: Deploy to Hetzner
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]  # ⚠️ ÄNDERE DIESE ZEILE!
   workflow_dispatch:
 
 jobs:
@@ -48,24 +48,20 @@ jobs:
           echo "🔍 Go version:"
           go version
           
-          # Add GitHub to known hosts to avoid host key verification failed
-          echo "🔑 Adding GitHub to known hosts..."
-          mkdir -p ~/.ssh
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          # 🔥 CRITICAL FIX: Use direct download with correct branch
+          echo "📦 Downloading repository directly..."
+          wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/master.tar.gz -O repo.tar.gz || \
+          wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz -O repo.tar.gz
           
-          # Try SSH clone again with known hosts
-          echo "📦 Cloning repository with SSH..."
-          git clone git@github.com:Helloa123y/roproxy-lite.git .
-          CLONE_RESULT=$?
-          
-          # If both methods fail, download directly via wget
-          if [ $CLONE_RESULT -ne 0 ]; then
-            echo "🔄 Git clone failed, downloading directly..."
-            wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz
-            tar -xzf main.tar.gz
-            mv roproxy-lite-main/* .
-            mv roproxy-lite-main/.* . 2>/dev/null || true
-            rm -rf roproxy-lite-main main.tar.gz
+          if [ -f "repo.tar.gz" ]; then
+            echo "📦 Extracting repository..."
+            tar -xzf repo.tar.gz
+            mv roproxy-lite-*/* .
+            mv roproxy-lite-*/.* . 2>/dev/null || true
+            rm -rf roproxy-lite-* repo.tar.gz
+          else
+            echo "❌ Download failed, trying git clone..."
+            git clone https://github.com/Helloa123y/roproxy-lite.git . --depth=1
           fi
           
           # DEBUG: Show files
@@ -74,45 +70,17 @@ jobs:
           echo "📁 Go files:"
           find . -name "*.go" -o -name "go.mod" -o -name "go.sum"
           
-          # Check if we have source files - OHNE EOF!
-          if [ ! -f "main.go" ] && [ ! -f "go.mod" ]; then
-            echo "❌ No source files found! Creating minimal app..."
-            # Create go.mod with echo
-            echo "module roproxy-lite" > go.mod
-            echo "" >> go.mod
-            echo "go 1.21" >> go.mod
-            echo "" >> go.mod
-            echo "require github.com/valyala/fasthttp v1.51.0" >> go.mod
-            
-            # Create main.go with echo
-            echo "package main" > main.go
-            echo "" >> main.go
-            echo "import (" >> main.go
-            echo '	"fmt"' >> main.go
-            echo '	"log"' >> main.go
-            echo '	"net/http"' >> main.go
-            echo '	"os"' >> main.go
-            echo ")" >> main.go
-            echo "" >> main.go
-            echo "func main() {" >> main.go
-            echo '	port := os.Getenv("PORT")' >> main.go
-            echo '	if port == "" {' >> main.go
-            echo '		port = "8080"' >> main.go
-            echo "	}" >> main.go
-            echo "" >> main.go
-            echo '	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {' >> main.go
-            echo '		fmt.Fprintf(w, "RoProxy Lite is running on port %s", port)' >> main.go
-            echo "	})" >> main.go
-            echo "" >> main.go
-            echo '	log.Printf("Server starting on port %s", port)' >> main.go
-            echo '	log.Fatal(http.ListenAndServe(":"+port, nil))' >> main.go
-            echo "}" >> main.go
-          fi
-          
           # Build application
           echo "🔨 Building..."
-          go mod download
-          go build -v -o roproxy-lite
+          if [ -f "go.mod" ]; then
+            go mod download
+            go build -v -o roproxy-lite
+          else
+            echo "❌ go.mod not found, creating it..."
+            go mod init roproxy-lite
+            go mod tidy
+            go build -v -o roproxy-lite
+          fi
           
           echo "🔍 Build result:"
           ls -la roproxy-lite || echo "❌ Binary not found!"
@@ -121,31 +89,6 @@ jobs:
             chmod +x roproxy-lite
             echo "🧪 Testing binary:"
             ./roproxy-lite -version || echo "❌ Binary test failed"
-          else
-            echo "❌ Build failed! Creating simple binary..."
-            # Fallback: create a simple binary with echo
-            echo "package main" > simple.go
-            echo "" >> simple.go
-            echo "import (" >> simple.go
-            echo '	"fmt"' >> simple.go
-            echo '	"net/http"' >> simple.go
-            echo '	"os"' >> simple.go
-            echo ")" >> simple.go
-            echo "" >> simple.go
-            echo "func main() {" >> simple.go
-            echo '	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {' >> simple.go
-            echo '		fmt.Fprint(w, "RoProxy Lite is running!")' >> simple.go
-            echo "	})" >> simple.go
-            echo '	port := os.Getenv("PORT")' >> simple.go
-            echo '	if port == "" {' >> simple.go
-            echo '		port = "8080"' >> simple.go
-            echo "	}" >> simple.go
-            echo '	fmt.Printf("Server running on port %s\n", port)' >> simple.go
-            echo '	http.ListenAndServe(":"+port, nil)' >> simple.go
-            echo "}" >> simple.go
-            
-            go build -o roproxy-lite simple.go
-            chmod +x roproxy-lite
           fi
           
           # Create systemd service
@@ -175,9 +118,3 @@ jobs:
           echo "✅ Deployment completed!"
           sleep 5
           systemctl status roproxy-lite --no-pager
-          
-          echo "🔍 Checking port 8080:"
-          netstat -tlnp | grep :8080 || echo "Port 8080 not found"
-          
-          echo "🧪 Testing with curl:"
-          curl -s http://localhost:8080 || echo "Curl test failed"
