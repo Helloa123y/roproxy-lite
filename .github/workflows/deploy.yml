@@ -25,23 +25,50 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
           echo "🚀 Starting deployment..."
+          
+          # App directory
           APP_DIR="/app/roproxy-lite"
           mkdir -p $APP_DIR
           cd $APP_DIR
           
+          # Clone or pull repository
           if [ ! -d ".git" ]; then
+            echo "📦 Cloning repository..."
             git clone https://github.com/Helloa123y/roproxy-lite.git .
           else
+            echo "🔄 Pulling latest changes..."
             git pull origin main
           fi
           
+          # Build application
+          echo "🔨 Building..."
           go mod download
           go build -o roproxy-lite
           
-          # Systemd service ohne EOF - Einzeiler
-          echo -e "[Unit]\nDescription=RoProxy Lite Service\nAfter=network.target\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=$APP_DIR\nExecStart=$APP_DIR/roproxy-lite\nEnvironment=TIMEOUT=10\nEnvironment=RETRIES=3\nEnvironment=PORT=8080\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target" > /etc/systemd/system/roproxy-lite.service
+          # Create systemd service with echo commands
+          echo "📋 Creating service..."
+          echo "[Unit]" > /etc/systemd/system/roproxy-lite.service
+          echo "Description=RoProxy Lite Service" >> /etc/systemd/system/roproxy-lite.service
+          echo "After=network.target" >> /etc/systemd/system/roproxy-lite.service
+          echo "" >> /etc/systemd/system/roproxy-lite.service
+          echo "[Service]" >> /etc/systemd/system/roproxy-lite.service
+          echo "Type=simple" >> /etc/systemd/system/roproxy-lite.service
+          echo "User=root" >> /etc/systemd/system/roproxy-lite.service
+          echo "WorkingDirectory=$APP_DIR" >> /etc/systemd/system/roproxy-lite.service
+          echo "ExecStart=$APP_DIR/roproxy-lite" >> /etc/systemd/system/roproxy-lite.service
+          echo "Environment=TIMEOUT=10" >> /etc/systemd/system/roproxy-lite.service
+          echo "Environment=RETRIES=3" >> /etc/systemd/system/roproxy-lite.service
+          echo "Environment=PORT=8080" >> /etc/systemd/system/roproxy-lite.service
+          echo "Restart=always" >> /etc/systemd/system/roproxy-lite.service
+          echo "RestartSec=5" >> /etc/systemd/system/roproxy-lite.service
+          echo "" >> /etc/systemd/system/roproxy-lite.service
+          echo "[Install]" >> /etc/systemd/system/roproxy-lite.service
+          echo "WantedBy=multi-user.target" >> /etc/systemd/system/roproxy-lite.service
           
+          # Enable and restart service
           systemctl daemon-reload
           systemctl enable roproxy-lite
           systemctl restart roproxy-lite
+          
           echo "✅ Deployment completed!"
+          systemctl status roproxy-lite --no-pager
