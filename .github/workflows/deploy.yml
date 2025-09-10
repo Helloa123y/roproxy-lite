@@ -69,50 +69,24 @@ jobs:
           echo "📁 Go files:"
           find . -name "*.go" -o -name "go.mod" -o -name "go.sum"
           
-          # Build application
-          echo "🔨 Building..."
-          if [ -f "go.mod" ]; then
+          # Build application - ONLY IF WE HAVE SOURCE FILES
+          if [ -f "main.go" ] && [ -f "go.mod" ]; then
+            echo "🔨 Building from repository source..."
             go mod download
             go build -v -o roproxy-lite
-          else
-            echo "❌ go.mod not found, creating it..."
-            go mod init roproxy-lite
-            go mod tidy
-            go build -v -o roproxy-lite
-          fi
-          
-          echo "🔍 Build result:"
-          ls -la roproxy-lite || echo "❌ Binary not found!"
-          
-          if [ -f "roproxy-lite" ]; then
-            chmod +x roproxy-lite
-            echo "🧪 Testing binary (timeout after 3s)..."
-            timeout 3s ./roproxy-lite -version || echo "✅ Binary started successfully (expected for server)"
-          else
-            echo "❌ Build failed! Creating simple binary..."
-            # Fallback: create a simple binary
-            echo 'package main' > simple.go
-            echo '' >> simple.go
-            echo 'import (' >> simple.go
-            echo '    "fmt"' >> simple.go
-            echo '    "net/http"' >> simple.go
-            echo '    "os"' >> simple.go
-            echo ')' >> simple.go
-            echo '' >> simple.go
-            echo 'func main() {' >> simple.go
-            echo '    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {' >> simple.go
-            echo '        fmt.Fprint(w, "RoProxy Lite is running!")' >> simple.go
-            echo '    })' >> simple.go
-            echo '    port := os.Getenv("PORT")' >> simple.go
-            echo '    if port == "" {' >> simple.go
-            echo '        port = "8080"' >> simple.go
-            echo '    }' >> simple.go
-            echo '    fmt.Printf("Server running on port %s\n", port)' >> simple.go
-            echo '    http.ListenAndServe(":"+port, nil)' >> simple.go
-            echo '}' >> simple.go
             
-            go build -o roproxy-lite simple.go
-            chmod +x roproxy-lite
+            echo "🔍 Build result:"
+            ls -la roproxy-lite || echo "❌ Binary not found!"
+            
+            if [ -f "roproxy-lite" ]; then
+              chmod +x roproxy-lite
+              echo "🧪 Testing binary (timeout after 3s)..."
+              timeout 3s ./roproxy-lite -version || echo "✅ Binary started successfully (expected for server)"
+            fi
+          else
+            echo "❌ No source files found in repository!"
+            echo "Please check your repository contains main.go and go.mod"
+            exit 1
           fi
           
           # Create systemd service
