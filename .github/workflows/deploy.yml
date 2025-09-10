@@ -1,6 +1,6 @@
 name: Deploy to Hetzner
 
-on:
+on: 
   push:
     branches: [ master ]  # ⚠️ ÄNDERE DIESE ZEILE!
   workflow_dispatch:
