@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
- 
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -31,10 +31,19 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # Clone or pull repository
+          # Install Go if missing
+          if ! command -v go &> /dev/null; then
+            echo "📦 Installing Go..."
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+            rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+            export PATH=$PATH:/usr/local/go/bin
+          fi
+          
+          # Clone or pull repository - MIT SSH!
           if [ ! -d ".git" ]; then
             echo "📦 Cloning repository..."
-            git clone https://github.com/Helloa123y/roproxy-lite.git .
+            git clone git@github.com:Helloa123y/roproxy-lite.git .
           else
             echo "🔄 Pulling latest changes..."
             git pull origin main
@@ -45,7 +54,10 @@ jobs:
           go mod download
           go build -o roproxy-lite
           
-          # Create systemd service with echo commands
+          # Make binary executable
+          chmod +x roproxy-lite
+          
+          # Create systemd service
           echo "📋 Creating service..."
           echo "[Unit]" > /etc/systemd/system/roproxy-lite.service
           echo "Description=RoProxy Lite Service" >> /etc/systemd/system/roproxy-lite.service
