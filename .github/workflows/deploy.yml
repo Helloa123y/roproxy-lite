@@ -25,52 +25,23 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
           echo "🚀 Starting deployment..."
-          
-          # App directory
           APP_DIR="/app/roproxy-lite"
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # Clone or pull repository
           if [ ! -d ".git" ]; then
-            echo "📦 Cloning repository..."
             git clone https://github.com/Helloa123y/roproxy-lite.git .
           else
-            echo "🔄 Pulling latest changes..."
             git pull origin main
           fi
           
-          # Build application
-          echo "🔨 Building..."
           go mod download
           go build -o roproxy-lite
           
-          # Create systemd service - MIT EINFACHEN ANFÜHRUNGSZEICHEN!
-          echo "📋 Creating service..."
-          cat > /etc/systemd/system/roproxy-lite.service << 'EOF'
-[Unit]
-Description=RoProxy Lite Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/app/roproxy-lite
-ExecStart=/app/roproxy-lite/roproxy-lite
-Environment=TIMEOUT=10
-Environment=RETRIES=3
-Environment=PORT=8080
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
+          # Systemd service ohne EOF - Einzeiler
+          echo -e "[Unit]\nDescription=RoProxy Lite Service\nAfter=network.target\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory=$APP_DIR\nExecStart=$APP_DIR/roproxy-lite\nEnvironment=TIMEOUT=10\nEnvironment=RETRIES=3\nEnvironment=PORT=8080\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target" > /etc/systemd/system/roproxy-lite.service
           
-          # Enable and restart service
           systemctl daemon-reload
           systemctl enable roproxy-lite
           systemctl restart roproxy-lite
-          
           echo "✅ Deployment completed!"
-          systemctl status roproxy-lite --no-pager
