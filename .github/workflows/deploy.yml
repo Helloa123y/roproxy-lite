@@ -31,6 +31,11 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
+          # 🔥 CRITICAL FIX: CLEAN THE DIRECTORY FIRST!
+          echo "🧹 Cleaning directory..."
+          rm -rf ./* ./.git* 2>/dev/null || true
+          ls -la  # Show contents after cleanup
+          
           # Install Go if missing
           if ! command -v go &> /dev/null; then
             echo "📦 Installing Go..."
@@ -38,24 +43,34 @@ jobs:
             rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
             echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
             export PATH=$PATH:/usr/local/go/bin
+            # Cleanup downloaded tar files
+            rm -f go1.21.0.linux-amd64.tar.gz*
           fi
           
           # Show Go version for debugging
           echo "🔍 Go version:"
           go version
           
-          # Clone or pull repository
-          if [ ! -d ".git" ]; then
-            echo "📦 Cloning repository..."
-            git clone https://github.com/Helloa123y/roproxy-lite.git .
-          else
-            echo "🔄 Pulling latest changes..."
-            git pull origin main
-          fi
+          # Clone repository - JETZT FUNKTIONIERT ES!
+          echo "📦 Cloning repository..."
+          git clone https://github.com/Helloa123y/roproxy-lite.git .
+          CLONE_RESULT=$?
+          echo "Git clone exit code: $CLONE_RESULT"
           
-          # Debug: Show files
-          echo "📁 Files in directory:"
+          # DEBUG: Show ALL files including hidden
+          echo "📁 ALL Files in directory after clone:"
           ls -la
+          
+          # DEBUG: Check if go.mod exists
+          echo "🔍 Checking for go.mod:"
+          if [ -f "go.mod" ]; then
+            echo "✅ go.mod found!"
+            cat go.mod
+          else
+            echo "❌ go.mod NOT found - creating it..."
+            go mod init roproxy-lite
+            go mod tidy
+          fi
           
           # Build application
           echo "🔨 Building..."
@@ -69,15 +84,11 @@ jobs:
           # Make binary executable
           chmod +x roproxy-lite
           
-          # Debug: Check binary permissions
-          echo "🔍 Binary permissions:"
-          ls -la roproxy-lite
-          
           # Test run binary
           echo "🧪 Testing binary:"
           ./roproxy-lite -version || echo "❌ Binary test failed"
           
-          # Create systemd service with echo commands
+          # Create systemd service
           echo "📋 Creating service..."
           echo "[Unit]" > /etc/systemd/system/roproxy-lite.service
           echo "Description=RoProxy Lite Service" >> /etc/systemd/system/roproxy-lite.service
@@ -106,12 +117,6 @@ jobs:
           echo "✅ Deployment completed!"
           sleep 3
           systemctl status roproxy-lite --no-pager
-          
-          # Show logs if failed
-          if systemctl is-failed roproxy-lite; then
-            echo "❌ Service failed, showing logs:"
-            journalctl -u roproxy-lite -n 20 --no-pager
-          fi
           
           # Check if port 8080 is open
           echo "🔍 Checking port 8080:"
