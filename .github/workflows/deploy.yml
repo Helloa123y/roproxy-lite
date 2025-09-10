@@ -45,9 +45,9 @@ jobs:
           go mod download
           go build -o roproxy-lite
           
-          # Create systemd service
+          # Create systemd service - MIT EINFACHEN ANFÜHRUNGSZEICHEN!
           echo "📋 Creating service..."
-          cat > /etc/systemd/system/roproxy-lite.service << EOF
+          cat > /etc/systemd/system/roproxy-lite.service << 'EOF'
 [Unit]
 Description=RoProxy Lite Service
 After=network.target
@@ -55,8 +55,8 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$APP_DIR
-ExecStart=$APP_DIR/roproxy-lite
+WorkingDirectory=/app/roproxy-lite
+ExecStart=/app/roproxy-lite/roproxy-lite
 Environment=TIMEOUT=10
 Environment=RETRIES=3
 Environment=PORT=8080
