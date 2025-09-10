@@ -31,7 +31,7 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # 🔥 CRITICAL: Kill old processes first!
+          # Kill old processes first!
           echo "🔫 Killing old processes..."
           pkill -f roproxy-lite || true
           sleep 2
@@ -39,19 +39,6 @@ jobs:
           # Clean directory
           echo "🧹 Cleaning directory..."
           rm -rf ./* ./.git* 2>/dev/null || true
-          
-          # Install Go if missing
-          if ! command -v go &> /dev/null; then
-            echo "📦 Installing Go..."
-            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
-            rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz
-            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-            export PATH=$PATH:/usr/local/go/bin
-            rm -f go1.21.0.linux-amd64.tar.gz*
-          fi
-          
-          echo "🔍 Go version:"
-          go version
           
           # Download repository
           echo "📦 Downloading repository..."
@@ -82,14 +69,16 @@ jobs:
           echo "🔍 Build result:"
           ls -la roproxy-lite
           
-          # Kill any remaining old processes
-          echo "🔫 Ensuring no old processes are running..."
-          pkill -f roproxy-lite || true
-          sleep 1
-          
-          # Test the new binary
-          echo "🧪 Testing new binary..."
-          timeout 2s ./roproxy-lite || echo "✅ Test completed"
+          # 🔥 CRITICAL: Test the binary manually to see why it fails
+          echo "🧪 Testing binary manually..."
+          export TIMEOUT=10
+          export RETRIES=3
+          export PORT=8080
+          ./roproxy-lite &
+          sleep 3
+          ps aux | grep roproxy
+          curl -s http://localhost:8080 || echo "Curl failed"
+          pkill -f roproxy-lite
           
           # Create systemd service
           echo "📋 Creating service..."
@@ -124,11 +113,12 @@ jobs:
           sleep 5
           systemctl status roproxy-lite --no-pager
           
+          # 🔥 SHOW LOGS TO SEE WHY IT FAILS
+          echo "📋 Service logs:"
+          journalctl -u roproxy-lite -n 20 --no-pager
+          
           echo "🔍 Checking processes:"
           ps aux | grep roproxy || echo "No processes found"
           
           echo "🔍 Checking port 8080:"
           netstat -tlnp | grep :8080 || echo "Port 8080 not found"
-          
-          echo "🧪 Testing with curl:"
-          curl -s http://localhost:8080 || echo "Curl failed"
