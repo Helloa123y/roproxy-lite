@@ -31,9 +31,15 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # Kill old processes first! - MIT || true IGNORIEREN
-          echo "🔫 Killing old processes..."
-          pkill -f roproxy-lite || echo "⚠️ No processes to kill (this is normal)"
+          # 🔥 KEIN pkill MEHR - stattdessen systemctl stop
+          echo "🛑 Stopping any running services..."
+          systemctl stop roproxy-lite || echo "⚠️ Service not running"
+          systemctl disable roproxy-lite || echo "⚠️ Service not enabled"
+          sleep 2
+          
+          # Manuell Prozesse beenden ohne pkill
+          echo "🔫 Stopping any rogue processes..."
+          kill $(lsof -t -i:8080) 2>/dev/null || echo "⚠️ No processes on port 8080"
           sleep 2
           
           # Clean directory
@@ -42,8 +48,17 @@ jobs:
           
           # Download repository
           echo "📦 Downloading repository..."
-          wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz -O repo.tar.gz || echo "⚠️ Download failed, trying git..."
-          git clone https://github.com/Helloa123y/roproxy-lite.git . --depth=1 || echo "❌ Git clone also failed"
+          wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz -O repo.tar.gz
+          if [ -f "repo.tar.gz" ]; then
+            echo "📦 Extracting repository..."
+            tar -xzf repo.tar.gz
+            mv roproxy-lite-main/* .
+            mv roproxy-lite-main/.* . 2>/dev/null || true
+            rm -rf roproxy-lite-main repo.tar.gz
+          else
+            echo "❌ Download failed, trying git clone..."
+            git clone https://github.com/Helloa123y/roproxy-lite.git . --depth=1
+          fi
           
           # DEBUG
           echo "📁 Files in directory:"
@@ -53,18 +68,11 @@ jobs:
           
           # Build application
           echo "🔨 Building..."
-          go mod download || echo "⚠️ go mod download failed"
-          go build -v -o roproxy-lite || echo "❌ Build failed"
+          go mod download
+          go build -v -o roproxy-lite
           
           echo "🔍 Build result:"
-          ls -la roproxy-lite || echo "❌ Binary not found"
-          
-          # Test the binary manually
-          echo "🧪 Testing binary manually..."
-          export TIMEOUT=10
-          export RETRIES=3
-          export PORT=8080
-          timeout 5s ./roproxy-lite || echo "⚠️ Binary test completed (may have started)"
+          ls -la roproxy-lite
           
           # Create systemd service
           echo "📋 Creating service..."
@@ -85,11 +93,6 @@ jobs:
           echo "" >> /etc/systemd/system/roproxy-lite.service
           echo "[Install]" >> /etc/systemd/system/roproxy-lite.service
           echo "WantedBy=multi-user.target" >> /etc/systemd/system/roproxy-lite.service
-          
-          # Stop and disable old service first
-          echo "🛑 Stopping old service..."
-          systemctl stop roproxy-lite || echo "⚠️ Service not running"
-          systemctl disable roproxy-lite || echo "⚠️ Service not enabled"
           
           systemctl daemon-reload
           systemctl enable roproxy-lite
