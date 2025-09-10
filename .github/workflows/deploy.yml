@@ -77,7 +77,7 @@ jobs:
           echo "🧪 Testing binary:"
           ./roproxy-lite -version || echo "❌ Binary test failed"
           
-          # Create systemd service with echo commands (KEIN EOF!)
+          # Create systemd service with echo commands
           echo "📋 Creating service..."
           echo "[Unit]" > /etc/systemd/system/roproxy-lite.service
           echo "Description=RoProxy Lite Service" >> /etc/systemd/system/roproxy-lite.service
@@ -112,3 +112,11 @@ jobs:
             echo "❌ Service failed, showing logs:"
             journalctl -u roproxy-lite -n 20 --no-pager
           fi
+          
+          # Check if port 8080 is open
+          echo "🔍 Checking port 8080:"
+          netstat -tlnp | grep :8080 || echo "Port 8080 not found"
+          
+          # Final test
+          echo "🧪 Final test - curl localhost:8080"
+          curl -s http://localhost:8080 || echo "Curl test failed"
