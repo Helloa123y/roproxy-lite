@@ -31,7 +31,7 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # 🔥 Clean directory first
+          # Clean directory first
           echo "🧹 Cleaning directory..."
           rm -rf ./* ./.git* 2>/dev/null || true
           
@@ -48,7 +48,7 @@ jobs:
           echo "🔍 Go version:"
           go version
           
-          # 🔥 CRITICAL FIX: USE SSH INSTEAD OF HTTPS FOR GIT CLONE
+          # Clone repository with SSH
           echo "📦 Cloning repository with SSH..."
           git clone git@github.com:Helloa123y/roproxy-lite.git .
           CLONE_RESULT=$?
@@ -64,33 +64,31 @@ jobs:
           echo "📁 Files in directory:"
           ls -la
           
-          # Check if main.go exists
+          # Check if main.go exists - OHNE EOF BLOCK!
           if [ ! -f "main.go" ]; then
             echo "❌ main.go not found! Creating minimal version..."
-            cat > main.go << 'EOL'
-package main
-
-import (
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-)
-
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "RoProxy Lite is running on port %s", port)
-	})
-	
-	log.Printf("Server starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
-}
-EOL
+            echo 'package main' > main.go
+            echo '' >> main.go
+            echo 'import (' >> main.go
+            echo '	"fmt"' >> main.go
+            echo '	"log"' >> main.go
+            echo '	"net/http"' >> main.go
+            echo '	"os"' >> main.go
+            echo ')' >> main.go
+            echo '' >> main.go
+            echo 'func main() {' >> main.go
+            echo '	port := os.Getenv("PORT")' >> main.go
+            echo '	if port == "" {' >> main.go
+            echo '		port = "8080"' >> main.go
+            echo '	}' >> main.go
+            echo '	' >> main.go
+            echo '	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {' >> main.go
+            echo '		fmt.Fprintf(w, "RoProxy Lite is running on port %s", port)' >> main.go
+            echo '	})' >> main.go
+            echo '	' >> main.go
+            echo '	log.Printf("Server starting on port %s", port)' >> main.go
+            echo '	log.Fatal(http.ListenAndServe(":"+port, nil))' >> main.go
+            echo '}' >> main.go
           fi
           
           # Build application
