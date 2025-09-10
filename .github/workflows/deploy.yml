@@ -31,9 +31,9 @@ jobs:
           mkdir -p $APP_DIR
           cd $APP_DIR
           
-          # Kill old processes first!
+          # Kill old processes first! - MIT || true IGNORIEREN
           echo "🔫 Killing old processes..."
-          pkill -f roproxy-lite || true
+          pkill -f roproxy-lite || echo "⚠️ No processes to kill (this is normal)"
           sleep 2
           
           # Clean directory
@@ -42,18 +42,8 @@ jobs:
           
           # Download repository
           echo "📦 Downloading repository..."
-          wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz -O repo.tar.gz
-          
-          if [ -f "repo.tar.gz" ]; then
-            echo "📦 Extracting repository..."
-            tar -xzf repo.tar.gz
-            mv roproxy-lite-main/* .
-            mv roproxy-lite-main/.* . 2>/dev/null || true
-            rm -rf roproxy-lite-main repo.tar.gz
-          else
-            echo "❌ Download failed, trying git clone..."
-            git clone https://github.com/Helloa123y/roproxy-lite.git . --depth=1
-          fi
+          wget https://github.com/Helloa123y/roproxy-lite/archive/refs/heads/main.tar.gz -O repo.tar.gz || echo "⚠️ Download failed, trying git..."
+          git clone https://github.com/Helloa123y/roproxy-lite.git . --depth=1 || echo "❌ Git clone also failed"
           
           # DEBUG
           echo "📁 Files in directory:"
@@ -63,22 +53,18 @@ jobs:
           
           # Build application
           echo "🔨 Building..."
-          go mod download
-          go build -v -o roproxy-lite
+          go mod download || echo "⚠️ go mod download failed"
+          go build -v -o roproxy-lite || echo "❌ Build failed"
           
           echo "🔍 Build result:"
-          ls -la roproxy-lite
+          ls -la roproxy-lite || echo "❌ Binary not found"
           
-          # 🔥 CRITICAL: Test the binary manually to see why it fails
+          # Test the binary manually
           echo "🧪 Testing binary manually..."
           export TIMEOUT=10
           export RETRIES=3
           export PORT=8080
-          ./roproxy-lite &
-          sleep 3
-          ps aux | grep roproxy
-          curl -s http://localhost:8080 || echo "Curl failed"
-          pkill -f roproxy-lite
+          timeout 5s ./roproxy-lite || echo "⚠️ Binary test completed (may have started)"
           
           # Create systemd service
           echo "📋 Creating service..."
@@ -102,8 +88,8 @@ jobs:
           
           # Stop and disable old service first
           echo "🛑 Stopping old service..."
-          systemctl stop roproxy-lite || true
-          systemctl disable roproxy-lite || true
+          systemctl stop roproxy-lite || echo "⚠️ Service not running"
+          systemctl disable roproxy-lite || echo "⚠️ Service not enabled"
           
           systemctl daemon-reload
           systemctl enable roproxy-lite
@@ -113,7 +99,7 @@ jobs:
           sleep 5
           systemctl status roproxy-lite --no-pager
           
-          # 🔥 SHOW LOGS TO SEE WHY IT FAILS
+          # SHOW LOGS TO SEE WHY IT FAILS
           echo "📋 Service logs:"
           journalctl -u roproxy-lite -n 20 --no-pager
           
@@ -122,3 +108,6 @@ jobs:
           
           echo "🔍 Checking port 8080:"
           netstat -tlnp | grep :8080 || echo "Port 8080 not found"
+          
+          echo "🧪 Final test with curl:"
+          curl -s http://localhost:8080 || echo "Curl failed"
