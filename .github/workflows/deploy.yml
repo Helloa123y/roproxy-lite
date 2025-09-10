@@ -1,0 +1,76 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+
+    - name: Deploy to Server
+      uses: appleboy/ssh-action@v0.1.6
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          echo "🚀 Starting deployment..."
+          
+          # App directory
+          APP_DIR="/app/roproxy-lite"
+          mkdir -p $APP_DIR
+          cd $APP_DIR
+          
+          # Clone or pull repository
+          if [ ! -d ".git" ]; then
+            echo "📦 Cloning repository..."
+            git clone https://github.com/Helloa123y/roproxy-lite.git .
+          else
+            echo "🔄 Pulling latest changes..."
+            git pull origin main
+          fi
+          
+          # Build application
+          echo "🔨 Building..."
+          go mod download
+          go build -o roproxy-lite
+          
+          # Create systemd service
+          echo "📋 Creating service..."
+          cat > /etc/systemd/system/roproxy-lite.service << EOF
+[Unit]
+Description=RoProxy Lite Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$APP_DIR
+ExecStart=$APP_DIR/roproxy-lite
+Environment=TIMEOUT=10
+Environment=RETRIES=3
+Environment=PORT=8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+          
+          # Enable and restart service
+          systemctl daemon-reload
+          systemctl enable roproxy-lite
+          systemctl restart roproxy-lite
+          
+          echo "✅ Deployment completed!"
+          systemctl status roproxy-lite --no-pager
