@@ -1,5 +1,4 @@
 name: Deploy to Hetzner
-
 on: 
   push:
     branches: [ master ]  # ⚠️ ÄNDERE DIESE ZEILE!
