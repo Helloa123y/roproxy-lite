@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -67,18 +67,23 @@ func main() {
 		}).Dial,
 	}
 
+	log.Printf("🚀 Starting server on port %s", port)
+	log.Printf("⚙️  Configuration: Timeout=%ds, Retries=%d, Proxies=%d", timeout, retries, len(proxies))
+
 	if err := fasthttp.ListenAndServe(":"+port, requestHandler); err != nil {
-		panic(err)
+		log.Fatalf("Error in ListenAndServe: %s", err)
 	}
 }
 
 func loadProxiesFromGeoNode() {
+	log.Printf("🌐 Loading proxies from GeoNode API...")
+
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	apiUrl := "https://proxylist.geonode.com/api/proxy-list?limit=50&sort_by=lastChecked&sort_type=desc"
+	apiUrl := "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc"
 	req.SetRequestURI(apiUrl)
 	req.Header.SetMethod("GET")
 	req.Header.Set("Accept", "application/json")
@@ -90,30 +95,38 @@ func loadProxiesFromGeoNode() {
 
 	err := apiClient.Do(req, resp)
 	if err != nil {
+		log.Printf("❌ Failed to connect to GeoNode API: %v", err)
 		loadDefaultProxies()
 		return
 	}
 
 	if resp.StatusCode() != 200 {
+		log.Printf("❌ GeoNode API returned status: %d", resp.StatusCode())
 		loadDefaultProxies()
 		return
 	}
 
 	var geoNodeResponse GeoNodeResponse
 	if err := json.Unmarshal(resp.Body(), &geoNodeResponse); err != nil {
+		log.Printf("❌ Failed to parse JSON response: %v", err)
 		loadDefaultProxies()
 		return
 	}
 
-	// Nur funktionierende Proxies
+	// Nur funktionierende Proxies mit guter UpTime
 	var goodProxies []Proxy
 	for _, proxy := range geoNodeResponse.Data {
-		if hasValidProtocol(proxy.Protocols) {
+		if proxy.UpTime > 90 && hasValidProtocol(proxy.Protocols) && proxy.Latency < 1000 {
 			goodProxies = append(goodProxies, proxy)
 		}
 	}
 
 	proxies = goodProxies
+	log.Printf("✅ Loaded %d proxies (filtered from %d)", len(proxies), len(geoNodeResponse.Data))
+
+	if len(proxies) == 0 {
+		log.Printf("⚠️  No good proxies found, using direct connections only")
+	}
 }
 
 func hasValidProtocol(protocols []string) bool {
@@ -126,9 +139,10 @@ func hasValidProtocol(protocols []string) bool {
 }
 
 func loadDefaultProxies() {
+	log.Printf("⚠️  Using default fallback proxies")
 	proxies = []Proxy{
-		{IP: "104.16.202.9", Port: "80", Protocols: []string{"http"}, Country: "CA"},
-		{IP: "104.21.237.193", Port: "80", Protocols: []string{"http"}, Country: "CA"},
+		{IP: "104.16.202.9", Port: "80", Protocols: []string{"http"}, Country: "CA", UpTime: 100},
+		{IP: "104.21.237.193", Port: "80", Protocols: []string{"http"}, Country: "CA", UpTime: 100},
 	}
 }
 
@@ -141,33 +155,23 @@ func getRandomProxy() *Proxy {
 }
 
 func requestHandler(ctx *fasthttp.RequestCtx) {
-	// Debug-Info in Response header
-	ctx.Response.Header.Set("X-Proxy-Count", strconv.Itoa(len(proxies)))
-	ctx.Response.Header.Set("X-Server-Time", time.Now().Format("15:04:05"))
+	log.Printf("📨 Received request: %s %s", ctx.Method(), ctx.RequestURI())
 
 	// URL Validation
 	path := string(ctx.RequestURI())[1:]
 	if path == "" {
-		sendDebugResponse(ctx, 400, "Please provide a URL path. Usage: /subdomain/path", nil)
+		ctx.Error("Please provide a URL path", 400)
 		return
 	}
 
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) < 2 {
-		sendDebugResponse(ctx, 400, "URL format invalid. Expected: /subdomain/path", nil)
+		ctx.Error("URL format invalid. Expected: /subdomain/path", 400)
 		return
 	}
 
-	response, debugInfo := makeRequestWithDebug(ctx, 1)
+	response := makeRequest(ctx, 1)
 	defer fasthttp.ReleaseResponse(response)
-
-	// Debug-Info zu Response hinzufügen
-	ctx.Response.Header.Set("X-Attempts", strconv.Itoa(debugInfo.Attempts))
-	ctx.Response.Header.Set("X-Proxy-Used", strconv.FormatBool(debugInfo.UsedProxy))
-	if debugInfo.Proxy != nil {
-		ctx.Response.Header.Set("X-Proxy-IP", debugInfo.Proxy.IP)
-		ctx.Response.Header.Set("X-Proxy-Port", debugInfo.Proxy.Port)
-	}
 
 	ctx.SetStatusCode(response.StatusCode())
 	ctx.SetBody(response.Body())
@@ -176,37 +180,20 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	})
 }
 
-type DebugInfo struct {
-	Attempts   int
-	UsedProxy  bool
-	Proxy      *Proxy
-	Error      string
-	Duration   time.Duration
-	TargetURL  string
-}
-
-func makeRequestWithDebug(ctx *fasthttp.RequestCtx, attempt int) (*fasthttp.Response, *DebugInfo) {
-	debugInfo := &DebugInfo{
-		Attempts: attempt,
-		TargetURL: "https://" + string(ctx.RequestURI())[1:],
-	}
-
+func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 	if attempt > retries {
-		debugInfo.Error = fmt.Sprintf("Max retries exceeded (%d)", retries)
+		log.Printf("❌ MAX RETRIES EXCEEDED after %d attempts", retries)
 		resp := fasthttp.AcquireResponse()
 		resp.SetStatusCode(502)
-		resp.SetBody([]byte(fmt.Sprintf("Proxy failed after %d attempts. Debug: %s", retries, debugInfo.Error)))
-		return resp, debugInfo
+		resp.SetBody([]byte("Proxy failed to connect. Please try again later."))
+		return resp
 	}
 
 	// Immer erst direkten Versuch, dann Proxy
 	useProxy := attempt > 1 && len(proxies) > 0
-	debugInfo.UsedProxy = useProxy
-
 	var proxy *Proxy
 	if useProxy {
 		proxy = getRandomProxy()
-		debugInfo.Proxy = proxy
 	}
 
 	req := fasthttp.AcquireRequest()
@@ -215,6 +202,8 @@ func makeRequestWithDebug(ctx *fasthttp.RequestCtx, attempt int) (*fasthttp.Resp
 	path := string(ctx.RequestURI())[1:]
 	parts := strings.SplitN(path, "/", 2)
 	targetURL := "https://" + parts[0] + ".roblox.com/" + parts[1]
+
+	log.Printf("🔗 Attempt %d/%d: %s -> %s (Proxy: %t)", attempt, retries, ctx.RequestURI(), targetURL, useProxy)
 
 	req.SetRequestURI(targetURL)
 	req.Header.SetMethod(string(ctx.Method()))
@@ -233,55 +222,40 @@ func makeRequestWithDebug(ctx *fasthttp.RequestCtx, attempt int) (*fasthttp.Resp
 	var err error
 
 	if useProxy && proxy != nil {
+		log.Printf("🌐 Using proxy: %s:%s (%s)", proxy.IP, proxy.Port, proxy.Country)
+		
 		proxyURL := proxy.IP + ":" + proxy.Port
 		dial := func(addr string) (net.Conn, error) {
 			return net.DialTimeout("tcp", proxyURL, time.Duration(timeout)*time.Second)
 		}
-
+		
 		proxyClient := &fasthttp.Client{
 			ReadTimeout:  time.Duration(timeout) * time.Second,
 			WriteTimeout: time.Duration(timeout) * time.Second,
 			Dial:         dial,
 		}
-
+		
 		err = proxyClient.Do(req, resp)
 	} else {
 		// Direkte Verbindung
+		log.Printf("🔗 Direct connection attempt")
 		err = client.Do(req, resp)
 	}
 
-	debugInfo.Duration = time.Since(startTime)
+	duration := time.Since(startTime)
 
 	if err != nil {
-		debugInfo.Error = err.Error()
+		log.Printf("❌ Attempt %d failed after %v: %v", attempt, duration, err)
 		fasthttp.ReleaseResponse(resp)
-
+		
 		// Kurze Pause vor nächstem Versuch
 		if attempt < retries {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-
-		return makeRequestWithDebug(ctx, attempt+1)
+		
+		return makeRequest(ctx, attempt+1)
 	}
 
-	return resp, debugInfo
-}
-
-func sendDebugResponse(ctx *fasthttp.RequestCtx, statusCode int, message string, debugInfo *DebugInfo) {
-	ctx.SetStatusCode(statusCode)
-	
-	response := map[string]interface{}{
-		"error":   message,
-		"status":  statusCode,
-		"time":    time.Now().Format("2006-01-02 15:04:05"),
-		"proxies": len(proxies),
-	}
-
-	if debugInfo != nil {
-		response["debug"] = debugInfo
-	}
-
-	jsonResponse, _ := json.MarshalIndent(response, "", "  ")
-	ctx.SetContentType("application/json")
-	ctx.SetBody(jsonResponse)
+	log.Printf("✅ Success! Status: %d, Time: %v, Size: %d bytes", resp.StatusCode(), duration, len(resp.Body()))
+	return resp
 }
