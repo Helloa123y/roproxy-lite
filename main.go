@@ -193,17 +193,20 @@ func getBestProxy() *Proxy {
 		return nil
 	}
 	
-	// Versuche die besten Proxies zuerst (sind schon sortiert)
+	// Versuche mehrere Proxies, nicht nur einen
 	rand.Seed(time.Now().UnixNano())
-	if len(proxies) > 3 {
-		// Wähle zufällig aus den besten 25%
-		topCount := len(proxies) / 4
-		if topCount < 1 {
-			topCount = 1
+	
+	// Versuche die besten 3 Proxies
+	for i := 0; i < 3 && i < len(proxies); i++ {
+		proxy := &proxies[rand.Intn(len(proxies))]
+		
+		// Bevorzuge Proxies mit hoher UpTime und niedriger Latenz
+		if proxy.UpTime > 95 && proxy.Latency < 500 {
+			return proxy
 		}
-		return &proxies[rand.Intn(topCount)]
 	}
 	
+	// Fallback: Irgendeinen Proxy
 	return &proxies[rand.Intn(len(proxies))]
 }
 
