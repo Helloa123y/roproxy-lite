@@ -86,6 +86,8 @@ jobs:
           
           # Build application with FULL PATH to go
           echo "🔨 Building..."
+          cd /app/roproxy-lite
+          /usr/local/go/bin/go mod tidy || go mod tidy
           /usr/local/go/bin/go mod download || go mod download
           /usr/local/go/bin/go build -v -o roproxy-lite || go build -v -o roproxy-lite
           
