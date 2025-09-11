@@ -121,8 +121,8 @@ func loadProxiesFromGeoNode() {
 	// Nur funktionierende Proxies mit guter UpTime
 	 var goodProxies []Proxy
     for _, proxy := range geoNodeResponse.Data {
-        if proxy.UpTime > 99 &&           // Nur 99%+ UpTime
-           proxy.Latency < 200 &&         // Nur <200ms Latenz
+        if proxy.UpTime > 60 &&           // Nur 99%+ UpTime
+           proxy.Latency < 300 &&         // Nur <200ms Latenz
            proxy.Speed > 1 &&          // Nur schnelle Proxies
            hasValidProtocol(proxy.Protocols) {
             goodProxies = append(goodProxies, proxy)
