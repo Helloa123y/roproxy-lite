@@ -381,10 +381,12 @@ func makeHTTPSRequestThroughProxy(req *fasthttp.Request, resp *fasthttp.Response
 	}
 
 	// 7. Sende HTTP Request durch den Tunnel
-	if err := req.Write(tlsConn); err != nil {
+	writer := bufio.NewWriter(tlsConn)
+	if err := req.Write(writer); err != nil {
 		tlsConn.Close()
 		return err
 	}
+	writer.Flush() // Wichtig: Buffer leeren
 
 	// 8. Lese HTTP Response
 	return resp.Read(bufio.NewReader(tlsConn))
