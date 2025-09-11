@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/valyala/fasthttp"
+	"golang.org/x/net/proxy"
 )
 
 var timeout = 30
@@ -83,7 +87,7 @@ func loadProxiesFromGeoNode() {
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	apiUrl := "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc"
+	apiUrl := "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc&protocols=socks4,socks5,https"
 	req.SetRequestURI(apiUrl)
 	req.Header.SetMethod("GET")
 	req.Header.Set("Accept", "application/json")
@@ -121,8 +125,16 @@ func loadProxiesFromGeoNode() {
 		}
 	}
 
+	// Nach Priorität sortieren
+	goodProxies = sortProxiesByPriority(goodProxies)
 	proxies = goodProxies
+	
 	log.Printf("✅ Loaded %d proxies (filtered from %d)", len(proxies), len(geoNodeResponse.Data))
+	for i, p := range proxies {
+		if i < 5 { // Zeige nur die ersten 5 an
+			log.Printf("   %d. %s:%s (%s) - %v", i+1, p.IP, p.Port, p.Country, p.Protocols)
+		}
+	}
 
 	if len(proxies) == 0 {
 		log.Printf("⚠️  No good proxies found, using direct connections only")
@@ -131,11 +143,42 @@ func loadProxiesFromGeoNode() {
 
 func hasValidProtocol(protocols []string) bool {
 	for _, protocol := range protocols {
-		if protocol == "http" || protocol == "https" {
+		if protocol == "socks4" || protocol == "socks5" || protocol == "https" || protocol == "http" {
 			return true
 		}
 	}
 	return false
+}
+
+func getProxyPriority(proxy *Proxy) int {
+	// Priorität: SOCKS5 > SOCKS4 > HTTPS > HTTP
+	for _, protocol := range proxy.Protocols {
+		switch protocol {
+		case "socks5":
+			return 4
+		case "socks4":
+			return 3
+		case "https":
+			return 2
+		case "http":
+			return 1
+		}
+	}
+	return 0
+}
+
+func sortProxiesByPriority(proxies []Proxy) []Proxy {
+	sorted := make([]Proxy, len(proxies))
+	copy(sorted, proxies)
+	
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if getProxyPriority(&sorted[j]) > getProxyPriority(&sorted[i]) {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	return sorted
 }
 
 func loadDefaultProxies() {
@@ -146,11 +189,22 @@ func loadDefaultProxies() {
 	}
 }
 
-func getRandomProxy() *Proxy {
+func getBestProxy() *Proxy {
 	if len(proxies) == 0 {
 		return nil
 	}
+	
+	// Versuche die besten Proxies zuerst (sind schon sortiert)
 	rand.Seed(time.Now().UnixNano())
+	if len(proxies) > 3 {
+		// Wähle zufällig aus den besten 25%
+		topCount := len(proxies) / 4
+		if topCount < 1 {
+			topCount = 1
+		}
+		return &proxies[rand.Intn(topCount)]
+	}
+	
 	return &proxies[rand.Intn(len(proxies))]
 }
 
@@ -190,10 +244,10 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 	}
 
 	// Immer erst direkten Versuch, dann Proxy
-	useProxy := true && len(proxies) > 0 
+	useProxy := attempt > 1 && len(proxies) > 0
 	var proxy *Proxy
 	if useProxy {
-		proxy = getRandomProxy()
+		proxy = getBestProxy()
 	}
 
 	req := fasthttp.AcquireRequest()
@@ -222,17 +276,20 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 	var err error
 
 	if useProxy && proxy != nil {
-		log.Printf("🌐 Using proxy: %s:%s (%s)", proxy.IP, proxy.Port, proxy.Country)
+		log.Printf("🌐 Using proxy: %s:%s (%s) - Protocols: %v", proxy.IP, proxy.Port, proxy.Country, proxy.Protocols)
 		
-		proxyURL := proxy.IP + ":" + proxy.Port
-		dial := func(addr string) (net.Conn, error) {
-			return net.DialTimeout("tcp", proxyURL, time.Duration(timeout)*time.Second)
+		// Proxy-Dialer basierend auf Protokoll
+		proxyDialer, err := getProxyDialer(proxy)
+		if err != nil {
+			log.Printf("❌ Proxy dialer creation failed: %v", err)
+			fasthttp.ReleaseResponse(resp)
+			return makeRequest(ctx, attempt+1)
 		}
 		
 		proxyClient := &fasthttp.Client{
 			ReadTimeout:  time.Duration(timeout) * time.Second,
 			WriteTimeout: time.Duration(timeout) * time.Second,
-			Dial:         dial,
+			Dial:         proxyDialer.Dial,
 		}
 		
 		err = proxyClient.Do(req, resp)
@@ -258,4 +315,73 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 
 	log.Printf("✅ Success! Status: %d, Time: %v, Size: %d bytes", resp.StatusCode(), duration, len(resp.Body()))
 	return resp
+}
+
+func getProxyDialer(p *Proxy) (proxy.Dialer, error) {
+	proxyAddr := net.JoinHostPort(p.IP, p.Port)
+	
+	// Check for SOCKS proxies first
+	for _, protocol := range p.Protocols {
+		if protocol == "socks5" {
+			log.Printf("   Using SOCKS5 proxy")
+			return proxy.SOCKS5("tcp", proxyAddr, nil, &net.Dialer{
+				Timeout: time.Duration(timeout) * time.Second,
+			})
+		}
+		if protocol == "socks4" {
+			log.Printf("   Using SOCKS4 proxy")
+			return proxy.SOCKS4("tcp", proxyAddr, nil, &net.Dialer{
+				Timeout: time.Duration(timeout) * time.Second,
+			})
+		}
+	}
+	
+	// Fallback to HTTP proxy
+	log.Printf("   Using HTTP proxy (with CONNECT)")
+	return &httpConnectDialer{
+		proxyAddr: proxyAddr,
+		timeout:   time.Duration(timeout) * time.Second,
+	}, nil
+}
+
+// HTTP CONNECT dialer implementation
+type httpConnectDialer struct {
+	proxyAddr string
+	timeout   time.Duration
+}
+
+func (d *httpConnectDialer) Dial(network, addr string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", d.proxyAddr, d.timeout)
+	if err != nil {
+		return nil, err
+	}
+	
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", addr, addr)
+	if _, err := conn.Write([]byte(connectReq)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	
+	// Read response
+	reader := bufio.NewReader(conn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	
+	if !strings.Contains(response, "200") {
+		conn.Close()
+		return nil, fmt.Errorf("CONNECT failed: %s", response)
+	}
+	
+	// Read remaining headers
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil || line == "\r\n" {
+			break
+		}
+	}
+	
+	return conn, nil
 }
