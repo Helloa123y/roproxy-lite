@@ -144,7 +144,7 @@ func loadProxiesFromGeoNode() {
 
 func hasValidProtocol(protocols []string) bool {
 	for _, protocol := range protocols {
-		if protocol == "socks5" || protocol == "https" || protocol == "http" {
+		if protocol == "socks5" || protocol == "https" {
 			return true
 		}
 	}
