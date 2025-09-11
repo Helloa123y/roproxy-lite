@@ -2,17 +2,17 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-	"net/url"
-	"crypto/tls"
 
 	"github.com/valyala/fasthttp"
 	"golang.org/x/net/proxy"
@@ -243,9 +243,9 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 	}
 
 	useProxy := true && len(proxies) > 0
-	var proxy *Proxy
+	var p *Proxy
 	if useProxy {
-		proxy = getBestProxy()
+		p = getBestProxy()
 	}
 
 	req := fasthttp.AcquireRequest()
@@ -273,15 +273,15 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 
 	var err error
 
-	if useProxy && proxy != nil {
-		log.Printf("🌐 Using proxy: %s:%s (%s) - Protocols: %v", proxy.IP, proxy.Port, proxy.Country, proxy.Protocols)
+	if useProxy && p != nil {
+		log.Printf("🌐 Using proxy: %s:%s (%s) - Protocols: %v", p.IP, p.Port, p.Country, p.Protocols)
 		
 		// Für HTTPS über Proxy: CONNECT Methode verwenden
 		if strings.HasPrefix(targetURL, "https://") {
-			err = makeHTTPSRequestThroughProxy(req, resp, proxy, targetURL)
+			err = makeHTTPSRequestThroughProxy(req, resp, p, targetURL)
 		} else {
 			// Für HTTP: Normaler Proxy
-			proxyDialer, err := getProxyDialer(proxy)
+			proxyDialer, err := getProxyDialer(p)
 			if err != nil {
 				log.Printf("❌ Proxy dialer creation failed: %v", err)
 				fasthttp.ReleaseResponse(resp)
@@ -330,26 +330,23 @@ func makeHTTPSRequestThroughProxy(req *fasthttp.Request, resp *fasthttp.Response
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 
 	// 2. Parse target URL für CONNECT
 	u, err := url.Parse(targetURL)
 	if err != nil {
+		conn.Close()
 		return err
 	}
 	
 	targetHost := u.Host
 	if u.Port() == "" {
-		if u.Scheme == "https" {
-			targetHost += ":443"
-		} else {
-			targetHost += ":80"
-		}
+		targetHost += ":443"
 	}
 
 	// 3. Sende CONNECT Anfrage
 	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetHost, targetHost)
 	if _, err := conn.Write([]byte(connectReq)); err != nil {
+		conn.Close()
 		return err
 	}
 
@@ -357,10 +354,12 @@ func makeHTTPSRequestThroughProxy(req *fasthttp.Request, resp *fasthttp.Response
 	reader := bufio.NewReader(conn)
 	responseLine, err := reader.ReadString('\n')
 	if err != nil {
+		conn.Close()
 		return err
 	}
 
 	if !strings.Contains(responseLine, "200") {
+		conn.Close()
 		return fmt.Errorf("CONNECT failed: %s", responseLine)
 	}
 
@@ -372,24 +371,23 @@ func makeHTTPSRequestThroughProxy(req *fasthttp.Request, resp *fasthttp.Response
 		}
 	}
 
-	// 6. Für HTTPS: TLS Handshake durch Proxy
-	if u.Scheme == "https" {
-		tlsConn := tls.Client(conn, &tls.Config{
-			ServerName: u.Hostname(),
-		})
-		if err := tlsConn.Handshake(); err != nil {
-			return err
-		}
-		conn = tlsConn
+	// 6. TLS Handshake durch Proxy
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName: u.Hostname(),
+	})
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return err
 	}
 
 	// 7. Sende HTTP Request durch den Tunnel
-	if err := req.Write(conn); err != nil {
+	if err := req.Write(tlsConn); err != nil {
+		tlsConn.Close()
 		return err
 	}
 
 	// 8. Lese HTTP Response
-	return resp.Read(bufio.NewReader(conn))
+	return resp.Read(bufio.NewReader(tlsConn))
 }
 
 func getProxyDialer(p *Proxy) (proxy.Dialer, error) {
