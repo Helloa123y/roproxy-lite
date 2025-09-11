@@ -83,7 +83,6 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 		fasthttp.ReleaseResponse(resp)
         return makeRequest(ctx, attempt + 1)
     } else {
-		resp.SetStatusCode(200)
 		return resp
 	}
 }
