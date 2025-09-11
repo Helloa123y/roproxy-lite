@@ -9,4 +9,5 @@ require (
 	github.com/valyala/fasthttp v1.33.0 // indirect
 	golang.org/x/net v0.0.0-20220111093109-d55c255bac03 // indirect
 	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/net/proxy v0.0.0-20220111093109-d55c255bac03 // indirect
 )
