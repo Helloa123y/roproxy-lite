@@ -329,75 +329,97 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 
 // Neue Funktion für HTTPS über Proxy
 func makeHTTPSRequestThroughProxy(req *fasthttp.Request, resp *fasthttp.Response, p *Proxy, targetURL string) error {
-	proxyAddr := net.JoinHostPort(p.IP, p.Port)
-	
-	// 1. Verbinde zum Proxy
-	conn, err := net.DialTimeout("tcp", proxyAddr, time.Duration(timeout)*time.Second)
-	if err != nil {
-		return err
-	}
+    proxyAddr := net.JoinHostPort(p.IP, p.Port)
+    
+    // 1. Verbinde zum Proxy
+    conn, err := net.DialTimeout("tcp", proxyAddr, 3*time.Second)
+    if err != nil {
+        return err
+    }
+    defer conn.Close()
 
-	// 2. Parse target URL für CONNECT
-	u, err := url.Parse(targetURL)
-	if err != nil {
-		conn.Close()
-		return err
-	}
-	
-	targetHost := u.Host
-	if u.Port() == "" {
-		targetHost += ":443"
-	}
+    // 2. Parse target URL
+    u, err := url.Parse(targetURL)
+    if err != nil {
+        return err
+    }
+    
+    targetHost := u.Host
+    if u.Port() == "" {
+        targetHost += ":443"
+    }
 
-	// 3. Sende CONNECT Anfrage
-	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetHost, targetHost)
-	if _, err := conn.Write([]byte(connectReq)); err != nil {
-		conn.Close()
-		return err
-	}
+    // 3. SOCKS5 CONNECT für HTTPS
+    if strings.Contains(p.Protocols[0], "socks5") {
+        // SOCKS5 Handshake
+        conn.Write([]byte{0x05, 0x01, 0x00})
+        buf := make([]byte, 2)
+        conn.Read(buf)
+        
+        // SOCKS5 CONNECT Request
+        host := u.Hostname()
+        port, _ := strconv.Atoi(u.Port())
+        if port == 0 {
+            port = 443
+        }
+        
+        request := []byte{0x05, 0x01, 0x00, 0x03}
+        request = append(request, byte(len(host)))
+        request = append(request, host...)
+        request = append(request, byte(port>>8), byte(port))
+        
+        conn.Write(request)
+        response := make([]byte, 10)
+        conn.Read(response)
+        
+        if response[1] != 0x00 {
+            return fmt.Errorf("SOCKS5 connection failed")
+        }
+    } else {
+        // HTTP CONNECT (für HTTPS-Proxies)
+        connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetHost, targetHost)
+        if _, err := conn.Write([]byte(connectReq)); err != nil {
+            return err
+        }
 
-	// 4. Lese CONNECT Response
-	reader := bufio.NewReader(conn)
-	responseLine, err := reader.ReadString('\n')
-	if err != nil {
-		conn.Close()
-		return err
-	}
+        // Read CONNECT response
+        reader := bufio.NewReader(conn)
+        responseLine, err := reader.ReadString('\n')
+        if err != nil {
+            return err
+        }
 
-	if !strings.Contains(responseLine, "200") {
-		conn.Close()
-		return fmt.Errorf("CONNECT failed: %s", responseLine)
-	}
+        if !strings.Contains(responseLine, "200") {
+            return fmt.Errorf("CONNECT failed: %s", responseLine)
+        }
 
-	// 5. Überspringe restliche Header
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil || strings.TrimSpace(line) == "" {
-			break
-		}
-	}
+        // Skip headers
+        for {
+            line, err := reader.ReadString('\n')
+            if err != nil || strings.TrimSpace(line) == "" {
+                break
+            }
+        }
+    }
 
-	// 6. TLS Handshake durch Proxy
-	tlsConn := tls.Client(conn, &tls.Config{
-		ServerName: u.Hostname(),
-	})
-	if err := tlsConn.Handshake(); err != nil {
-		conn.Close()
-		return err
-	}
+    // 4. TLS Handshake
+    tlsConn := tls.Client(conn, &tls.Config{
+        ServerName: u.Hostname(),
+        InsecureSkipVerify: true, // Wichtig für einige Proxies
+    })
+    
+    if err := tlsConn.Handshake(); err != nil {
+        return err
+    }
 
-	// 7. Sende HTTP Request durch den Tunnel
-	writer := bufio.NewWriter(tlsConn)
-	if err := req.Write(writer); err != nil {
-		tlsConn.Close()
-		return err
-	}
-	writer.Flush() // Wichtig: Buffer leeren
+    // 5. HTTP Request senden
+    if err := req.Write(tlsConn); err != nil {
+        return err
+    }
 
-	// 8. Lese HTTP Response
-	return resp.Read(bufio.NewReader(tlsConn))
+    // 6. HTTP Response lesen
+    return resp.Read(tlsConn)
 }
-
 func getProxyDialer(p *Proxy) (proxy.Dialer, error) {
 	proxyAddr := net.JoinHostPort(p.IP, p.Port)
 	
