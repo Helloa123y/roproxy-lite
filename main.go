@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -87,7 +87,7 @@ func loadProxiesFromGeoNode() {
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	apiUrl := "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc&protocols=socks4,socks5,https"
+	apiUrl := "https://proxylist.geonode.com/api/proxy-list?limit=100&sort_by=lastChecked&sort_type=desc&protocols=socks5,https"
 	req.SetRequestURI(apiUrl)
 	req.Header.SetMethod("GET")
 	req.Header.Set("Accept", "application/json")
@@ -143,7 +143,7 @@ func loadProxiesFromGeoNode() {
 
 func hasValidProtocol(protocols []string) bool {
 	for _, protocol := range protocols {
-		if protocol == "socks4" || protocol == "socks5" || protocol == "https" || protocol == "http" {
+		if protocol == "socks5" || protocol == "https" || protocol == "http" {
 			return true
 		}
 	}
@@ -151,12 +151,10 @@ func hasValidProtocol(protocols []string) bool {
 }
 
 func getProxyPriority(proxy *Proxy) int {
-	// Priorität: SOCKS5 > SOCKS4 > HTTPS > HTTP
+	// Priorität: SOCKS5 > HTTPS > HTTP
 	for _, protocol := range proxy.Protocols {
 		switch protocol {
 		case "socks5":
-			return 4
-		case "socks4":
 			return 3
 		case "https":
 			return 2
@@ -289,7 +287,9 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 		proxyClient := &fasthttp.Client{
 			ReadTimeout:  time.Duration(timeout) * time.Second,
 			WriteTimeout: time.Duration(timeout) * time.Second,
-			Dial:         proxyDialer.Dial,
+			Dial: func(addr string) (net.Conn, error) {
+				return proxyDialer.Dial("tcp", addr)
+			},
 		}
 		
 		err = proxyClient.Do(req, resp)
@@ -320,17 +320,11 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 func getProxyDialer(p *Proxy) (proxy.Dialer, error) {
 	proxyAddr := net.JoinHostPort(p.IP, p.Port)
 	
-	// Check for SOCKS proxies first
+	// Check for SOCKS5 proxies first
 	for _, protocol := range p.Protocols {
 		if protocol == "socks5" {
 			log.Printf("   Using SOCKS5 proxy")
 			return proxy.SOCKS5("tcp", proxyAddr, nil, &net.Dialer{
-				Timeout: time.Duration(timeout) * time.Second,
-			})
-		}
-		if protocol == "socks4" {
-			log.Printf("   Using SOCKS4 proxy")
-			return proxy.SOCKS4("tcp", proxyAddr, nil, &net.Dialer{
 				Timeout: time.Duration(timeout) * time.Second,
 			})
 		}
