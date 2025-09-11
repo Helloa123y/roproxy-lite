@@ -241,7 +241,7 @@ func makeRequest(ctx *fasthttp.RequestCtx, attempt int) *fasthttp.Response {
 	}
 
 	// Immer erst direkten Versuch, dann Proxy
-	useProxy := attempt > 1 && len(proxies) > 0
+	useProxy := true && len(proxies) > 0
 	var proxy *Proxy
 	if useProxy {
 		proxy = getBestProxy()
